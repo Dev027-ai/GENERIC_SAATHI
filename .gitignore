@@ -9,4 +9,3 @@ dist/
 .venv/
 *.sqlite3
 prescriptions/
-.DS_Store

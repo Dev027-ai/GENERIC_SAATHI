@@ -1,0 +1,29 @@
+{
+  "files": {
+    "generic_saathi_common_medicines_130(1).csv": {
+      "rows": 130,
+      "columns": 20,
+      "exact_duplicate_rows": 0,
+      "missing_strength": 7,
+      "missing_pack_size": 1,
+      "branded_prices_missing": 130,
+      "branded_source_urls_missing": 130,
+      "records_flagged_review": 130
+    },
+    "jan_aushadhi_extracted(2).csv": {
+      "rows": 2308,
+      "columns": 9,
+      "exact_duplicate_rows": 0,
+      "duplicate_drug_codes": 0,
+      "missing_strength": 460,
+      "missing_pack_size": 216,
+      "missing_prices": 0,
+      "records_flagged_review": 2308
+    },
+    "drug_code_linkage": {
+      "common_catalogue_records": 130,
+      "codes_found_in_jan_catalogue": 130
+    }
+  },
+  "policy": "Imported prices are source-provided but not independently verified. Branded price comparisons and savings are disabled until review."
+}
