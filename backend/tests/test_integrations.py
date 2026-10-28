@@ -116,3 +116,34 @@ def test_gemma_gemini_api_without_key_falls_back_without_network(monkeypatch):
     monkeypatch.delenv("GEMMA_API_KEY", raising=False)
     monkeypatch.setenv("GEMMA_MODEL_ID", "gemma-4-31b-it")
     assert _gemma_search_terms("paracetmol") == []
+
+
+def test_compare_never_claims_savings_without_fresh_verified_price_files():
+    r = client.post("/api/v1/medicines/compare", json={"catalogue_id": "23", "branded_name": "Dolo 500 Tablet"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["comparison_allowed"] is False
+    assert body["savings_inr"] is None
+    assert body["savings_percent"] is None
+    assert "no savings are claimed" in body["notice"].lower()
+
+
+def test_jan_price_evidence_requires_official_source_and_fresh_date():
+    from datetime import date, timedelta
+    from app.main import _valid_jan_price_record
+
+    base = {
+        "generic_name": "Paracetamol Tablets IP 500 mg",
+        "strength": "500 mg",
+        "pack_size": "10 tablets",
+        "mrp_inr": "6.57",
+        "source_url": "https://janaushadhi.gov.in/product-portfolio/product-view-list",
+        "source_name": "Official PMBI product list",
+        "checked_on": date.today().isoformat(),
+        "verification_status": "verified",
+    }
+    assert _valid_jan_price_record(base)
+    assert not _valid_jan_price_record({**base, "source_url": "https://example.com/price"})
+    assert not _valid_jan_price_record({**base, "verification_status": "unverified"})
+    assert not _valid_jan_price_record({**base, "checked_on": (date.today() - timedelta(days=91)).isoformat()})
+    assert not _valid_jan_price_record({**base, "mrp_inr": "0"})
