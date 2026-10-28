@@ -38,6 +38,8 @@ function App(){
   return Number.isFinite(count)&&count>0?{count,unit}:null;
  }
  function priceComparison(r:Result){
+  // Catalogue prices are display-only until both source records are verified.
+  if(!verifiedComparison(r))return null;
   const brand=numericPrice(r.branded_price_inr),jan=numericPrice(r.jan_price_inr);
   if(brand===null||jan===null)return null;
   const brandPack=String(r.branded_pack_size||r.dosage_form_and_pack||'');
@@ -55,7 +57,9 @@ function App(){
   return {brand,jan,delta,amount,percentage,normalized,unit:b?.unit||j?.unit||'pack',janCount,brandPerUnit,janPerUnit};
  }
  function savedComparison(item:SavedItem){
-  if(item.brandPrice===null||item.janPrice===null)return null;
+   // Older localStorage entries may contain source-listed prices. Never calculate savings from them.
+   const verified=String(item.comparisonStatus||'').toLowerCase()==='verified'&&String(item.brandPriceStatus||'').toLowerCase()==='verified'&&String(item.janPriceStatus||'').toLowerCase()==='verified'&&!!item.brandSourceUrl;
+   if(!verified||item.brandPrice===null||item.janPrice===null||!item.packComparable)return null;
   const brandPack=item.brandPack||item.pack;
   const b=packInfo(brandPack,item.name+' '+item.strength),j=packInfo(item.pack,item.name+' '+item.strength);
   let brandPerUnit=item.brandPrice,janPerUnit=item.janPrice,normalized=false,janCount=1;
