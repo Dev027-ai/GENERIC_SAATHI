@@ -129,55 +129,128 @@ class CompareRequest(BaseModel):
     branded_name: str = Field(default="", max_length=200)
 
 
+def _normalized_price_key(value):
+    import re
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _valid_jan_price_record(row, today=None):
+    """Accept only dated, fresh, official PMBI records with complete identity fields."""
+    from datetime import date, timedelta
+    today = today or date.today()
+    required = ("generic_name", "strength", "pack_size", "mrp_inr", "source_url", "source_name", "checked_on", "verification_status")
+    if any(not str(row.get(k, "")).strip() for k in required):
+        return False
+    if str(row.get("verification_status", "")).strip().casefold() != "verified":
+        return False
+    if not str(row.get("source_url", "")).strip().startswith("https://janaushadhi.gov.in/"):
+        return False
+    try:
+        checked = date.fromisoformat(str(row["checked_on"]).strip())
+        price = float(str(row["mrp_inr"]).replace(",", "").replace("₹", "").strip())
+    except (TypeError, ValueError):
+        return False
+    return 0 < price <= 10_000_000 and checked <= today and checked >= today - timedelta(days=90)
+
+
+def _load_verified_jan_price_records():
+    if not JAN_VERIFIED_PRICE_FILE.exists():
+        return []
+    with JAN_VERIFIED_PRICE_FILE.open(newline="", encoding="utf-8-sig") as f:
+        return [row for row in csv.DictReader(f) if _valid_jan_price_record(row)]
+
+
 @app.post("/api/v1/medicines/compare")
 def compare_medicine(payload: CompareRequest):
-    """Calculate savings only against a verified, same-strength/form/pack price record."""
+    """Calculate savings only from fresh, source-backed, exact-identity price evidence."""
     from app.services.catalogue import load_catalogues, as_text
     _, jan = load_catalogues()
-    # Search result drug_code is the stable identifier from the approved Jan Aushadhi CSV.
     rows = jan[jan["drug_code"].astype(str).str.strip() == payload.catalogue_id.strip()]
     if rows.empty:
         raise HTTPException(status_code=404, detail="Jan Aushadhi drug code was not found in the supplied catalogue.")
     item = rows.iloc[0]
+    catalogue_generic = as_text(item.get("jan_aushadhi_generic_name")) or as_text(item.get("generic_name"))
+    catalogue_strength = as_text(item.get("strength"))
+    catalogue_pack = as_text(item.get("jan_aushadhi_pack_size")) or as_text(item.get("dosage_form_and_pack"))
     try:
-        generic_price = float(str(item.get("price_inr", "")).replace(",", ""))
+        catalogue_price = float(str(item.get("price_inr", "")).replace(",", ""))
     except (TypeError, ValueError):
-        generic_price = 0
-    return {"comparison_allowed": False, "savings_inr": None, "savings_percent": None,
-            "generic_price_inr": generic_price or None, "generic_name": as_text(item.get("generic_name")),
-            "strength": as_text(item.get("strength")), "pack_size": as_text(item.get("unit_size_raw")),
-            "price_status": as_text(item.get("price_type")),
-            "official_live_lookup_url": NPPA_SEARCH_URL,
-            "jan_aushadhi_official_product_list_url": PMBI_PRODUCT_URL,
-            "notice": "The supplied Jan Aushadhi price is shown as a source-listed amount, not a current-verified retail price. No savings are claimed. Verify the exact product, pack and current MRP before comparing."}
-    generic_name = as_text(item.get("jan_aushadhi_generic_name"))
-    strength = as_text(item.get("strength"))
-    pack = as_text(item.get("jan_aushadhi_pack_size")) or as_text(item.get("dosage_form_and_pack"))
-    # Exact matching is deliberately conservative; a near-name or different pack is not comparable.
-    candidates = []
-    for r in _load_price_evidence():
-        if not _valid_price_record(r):
+        catalogue_price = 0
+
+    base = {
+        "comparison_allowed": False,
+        "savings_inr": None,
+        "savings_percent": None,
+        "generic_name": catalogue_generic,
+        "strength": catalogue_strength,
+        "pack_size": catalogue_pack,
+        "catalogue_listed_price_inr": round(catalogue_price, 2) if catalogue_price > 0 else None,
+        "official_live_lookup_url": NPPA_SEARCH_URL,
+        "jan_aushadhi_official_product_list_url": PMBI_PRODUCT_URL,
+    }
+    norm = _normalized_price_key
+    jan_record = next((r for r in _load_verified_jan_price_records()
+        if (
+            (str(r.get("drug_code", "")).strip() and str(r.get("drug_code", "")).strip() == payload.catalogue_id.strip())
+            or (norm(r.get("generic_name")) == norm(catalogue_generic))
+        )
+        and norm(r.get("strength")) == norm(catalogue_strength)
+        and norm(r.get("pack_size")) == norm(catalogue_pack)
+    ), None)
+    if not jan_record:
+        return {
+            **base,
+            "notice": "No fresh, verified Jan Aushadhi price record with an exact strength and pack match is loaded. The catalogue price is source-listed only; no savings are claimed. Import and review an official PMBI CSV, then confirm the exact product.",
+        }
+
+    verified_brands = []
+    for record in _load_price_evidence():
+        if not _valid_price_record(record):
             continue
-        if payload.branded_name and as_text(r.get("brand_name")).casefold() != payload.branded_name.strip().casefold():
+        if payload.branded_name and as_text(record.get("brand_name")).casefold() != payload.branded_name.strip().casefold():
             continue
-        if as_text(r.get("generic_name")).casefold() != generic_name.casefold():
+        if norm(record.get("generic_name")) != norm(catalogue_generic):
             continue
-        if as_text(r.get("strength")).casefold() != strength.casefold():
+        if norm(record.get("strength")) != norm(catalogue_strength):
             continue
-        if as_text(r.get("pack_size")).casefold() != pack.casefold():
+        if norm(record.get("pack_size")) != norm(catalogue_pack):
             continue
-        if as_text(r.get("dosage_form")).casefold() not in as_text(item.get("dosage_form_and_pack")).casefold():
+        if norm(record.get("dosage_form")) not in norm(item.get("dosage_form_and_pack")):
             continue
-        candidates.append(r)
-    if not candidates:
-        return {"comparison_allowed": False, "savings_inr": None, "savings_percent": None, "generic_price_inr": generic_price, "generic_name": generic_name, "strength": strength, "pack_size": pack, "official_live_lookup_url": NPPA_SEARCH_URL, "jan_aushadhi_official_product_list_url": PMBI_PRODUCT_URL, "notice": "No verified branded price with an exact ingredient, strength, dosage form and pack-size match is loaded. No savings are claimed. Check the official NPPA portal and import a source-backed, reviewed record."}
-    # Prefer the most recently checked verified record; date parsing is guarded.
-    candidates.sort(key=lambda r: str(r.get("checked_on", "")), reverse=True)
-    brand = candidates[0]
-    brand_price = float(str(brand["mrp_inr"]).replace(",", ""))
-    savings = round(brand_price - generic_price, 2)
-    percent = round((savings / brand_price) * 100, 1) if brand_price > 0 else None
-    return {"comparison_allowed": True, "brand_name": brand["brand_name"], "brand_price_inr": brand_price, "generic_name": generic_name, "generic_price_inr": generic_price, "strength": strength, "pack_size": pack, "savings_inr": savings, "savings_percent": percent, "price_source": brand["source_name"], "source_url": brand["source_url"], "checked_on": brand["checked_on"], "notice": "Price comparison is based on a loaded verified source record. Confirm current MRP and ask a pharmacist before switching; similar names alone do not establish clinical equivalence."}
+        verified_brands.append(record)
+
+    if not verified_brands:
+        return {
+            **base,
+            "jan_verified_price_inr": round(float(jan_record["mrp_inr"]), 2),
+            "jan_price_source": jan_record["source_name"],
+            "jan_source_url": jan_record["source_url"],
+            "jan_checked_on": jan_record["checked_on"],
+            "notice": "A fresh official Jan Aushadhi price is available, but no fresh verified branded price with the exact ingredient, strength, dosage form and pack match is loaded. No savings are claimed.",
+        }
+
+    verified_brands.sort(key=lambda r: str(r.get("checked_on", "")), reverse=True)
+    brand = verified_brands[0]
+    jan_price = float(str(jan_record["mrp_inr"]).replace(",", "").replace("₹", "").strip())
+    brand_price = float(str(brand["mrp_inr"]).replace(",", "").replace("₹", "").strip())
+    savings = round(brand_price - jan_price, 2)
+    return {
+        **base,
+        "comparison_allowed": True,
+        "brand_name": brand["brand_name"],
+        "brand_price_inr": round(brand_price, 2),
+        "generic_price_inr": round(jan_price, 2),
+        "jan_verified_price_inr": round(jan_price, 2),
+        "savings_inr": savings,
+        "savings_percent": round((savings / brand_price) * 100, 1) if brand_price > 0 else None,
+        "price_source": brand["source_name"],
+        "source_url": brand["source_url"],
+        "checked_on": brand["checked_on"],
+        "jan_price_source": jan_record["source_name"],
+        "jan_source_url": jan_record["source_url"],
+        "jan_checked_on": jan_record["checked_on"],
+        "notice": "Calculated from fresh, dated source records with matching ingredient, strength, dosage form and pack. These are source-listed prices, not guaranteed checkout prices; confirm current MRP and ask a pharmacist before changing a medicine.",
+    }
 
 
 @app.post("/api/v1/prescriptions/ocr")
@@ -201,6 +274,7 @@ async def prescription_ocr(file: UploadFile = File(...)):
 ROOT = Path(__file__).resolve().parents[2]
 REVIEW_FILE = ROOT / "data" / "reports" / "price_review_queue.csv"
 PRICE_EVIDENCE_FILE = ROOT / "data" / "input" / "branded_price_evidence.csv"
+JAN_VERIFIED_PRICE_FILE = ROOT / "data" / "input" / "jan_aushadhi_official_verified.csv"
 NPPA_SEARCH_URL = "https://nppaipdms.gov.in/NPPA/PharmaSahiDaam/searchMedicine"
 PMBI_PRODUCT_URL = "https://janaushadhi.gov.in/product-portfolio/product-view-list"
 KENDRA_FILE = ROOT / "data" / "input" / "kendra_directory.csv"
