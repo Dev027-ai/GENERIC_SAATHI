@@ -80,3 +80,12 @@ body{background:linear-gradient(180deg,#f8fcf9 0%,#eff8f3 100%);color:#073f32}.t
 @media(max-width:760px){:root{font-size:17px}.hero.elder-hero h1{font-size:2.45rem}.elder-search{height:auto;min-height:68px}.elder-search input{font-size:1rem}.result-actions{grid-template-columns:1fr}.action-speak{justify-content:flex-start}.ocr-medicine-row{padding:15px 13px}.ocr-medicine-row>span{font-size:1rem}.section-heading h2,.how h2{font-size:1.55rem}.compare-price strong{font-size:1.9rem}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 .web-price-failure{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}.web-price-failure .kendra-notice{flex:1;min-width:220px}.web-price-failure .secondary-button{font-size:1rem;min-height:48px}
+
+/* Counter slip is shown inline and brought into view when requested. */
+.counter-slip-section{scroll-margin-top:24px;margin:0 0 48px;display:flex;justify-content:center;outline:none;animation:counterSlipIn .24s ease-out}
+.counter-slip-section .slip-modal{position:relative;background:#fff;box-shadow:0 18px 48px #123b2414}
+.counter-slip-close{position:absolute;right:16px;top:16px;width:36px;height:36px;border:1px solid #dce9e1;border-radius:10px;background:#fff;color:#456b59;display:grid;place-items:center;cursor:pointer}
+.counter-slip-close:hover{background:#edf8f1;color:#087449}
+.counter-slip-section .slip-modal h2{padding-right:38px}
+@keyframes counterSlipIn{from{opacity:.65;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.counter-slip-section{animation:none}}
